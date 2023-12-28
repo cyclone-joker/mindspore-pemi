@@ -5,14 +5,22 @@ Infusing Hierarchical Guidance into Prompt Tuning: A Parameter-Efficient Framewo
 ACL 2023论文Mindspore代码实现
 
 #### 目录结构
-├─dataset.py 
+├─dataset.py
+
 ├─global_func.py
+
 ├─log.py
+
 ├─main.py
+
 ├─model.py
+
 ├─model_config.py
+
 ├─model_data
+
 |     ├─wheel
+
 |     |   └mindnlp-0.2.0.20231227-py3-none-any.whl
 
 #### 软件架构
