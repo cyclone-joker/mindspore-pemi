@@ -5,7 +5,7 @@ Infusing Hierarchical Guidance into Prompt Tuning: A Parameter-Efficient Framewo
 ACL 2023论文Mindspore代码实现
 
 #### 目录结构
-├─dataset.py
+├─[dataset.py](dataset.py)
 
 ├─global_func.py
 
