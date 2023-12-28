@@ -7,15 +7,15 @@ ACL 2023论文Mindspore代码实现
 #### 目录结构
 ├─[dataset.py](dataset.py)
 
-├─global_func.py
+├─[global_func.py](global_func.py)
 
-├─log.py
+├─[log.py](log.py)
 
-├─main.py
+├─[main.py](main.py)
 
-├─model.py
+├─[model.py](model.py)
 
-├─model_config.py
+├─[model_config.py](model_config.py)
 
 ├─model_data
 
