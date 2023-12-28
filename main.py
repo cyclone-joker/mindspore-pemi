@@ -14,12 +14,6 @@ import os
 from tqdm import tqdm
 
 
-from mindnlp.transformers import BertTokenizer, BertModel, RobertaForMaskedLM, RobertaTokenizer
-from mindnlp.engine import Trainer, Evaluator
-from mindnlp.engine.callbacks import CheckpointCallback, BestModelCallback, EarlyStopCallback
-from mindnlp.metrics import Accuracy, F1Score
-
-
 if __name__ == '__main__':
     ms.set_context(device_target='GPU',
                    device_id=0,
@@ -31,6 +25,7 @@ if __name__ == '__main__':
     # ms.set_auto_parallel_context(parallel_mode=ms.ParallelMode.AUTO_PARALLEL)
     ms.set_seed(101)
     freeze = True
+    label_mode = 5
     num_epochs = 15
     hierarchy = 3
     num_cls = [4, 11, 102]
@@ -46,17 +41,17 @@ if __name__ == '__main__':
                                         column_names=["input_ids", "attention_mask",
                                                       "token_type_ids", "mask_pos", "prompt_idx", "sen_range",
                                                       "top_level", "second_level", "third_level"],
-                                        shuffle=True).batch(8) for d in dataset_list]
+                                        shuffle=False).batch(8) for d in dataset_list]
 
-    classifier = MultiLabelClassifier(label_mode=5,
+    classifier = MultiLabelClassifier(label_mode=label_mode,
                                       num_cls=num_cls,
                                       tokenizer=d1.tokenizer,
                                       hierarchy=hierarchy,
                                       model_name=model_name,
                                       freeze=freeze)
+    # log.info(classifier.weight_units)
     log.info("freeze: {}".format(freeze))
     log.info("trainable params: {}".format(classifier.trainable_params()))
-
     optimizer = ms.nn.Adam(params=classifier.trainable_params(), learning_rate=learning_rate)
     loss_fn = ms.nn.SoftmaxCrossEntropyWithLogits(sparse=True, reduction="mean")
 
@@ -91,6 +86,9 @@ if __name__ == '__main__':
                     f1_metrics[i].update(logits[hierarchy_key[i]], data[hierarchy_key[i]])
                 if (idx + 1) % log_step == 0:
                     print()
+                    # print([getattr(classifier.weight_units, "l1_weight_units_{}".format(i)).value() for i in range(4)])
+                    # print(classifier.get_label_embeddings()[:4])
+                    # print([param.value() for param in classifier.weight_units.l2_weight_units])
                     log.info("Epoch {} Step {} Average Loss: {}".format(epoch+1, idx+1, loss_sum / (idx + 1)))
                     log.info("Epoch {} Step {} Acc: {}".format(epoch+1, idx + 1,
                                                                [acc_metrics[i].eval() for i in range(hierarchy)]))
@@ -116,7 +114,6 @@ if __name__ == '__main__':
             acc_metrics[i].update(eval_output["output"][hierarchy_key[i]], data[hierarchy_key[i]])
             f1_metrics[i].update(eval_output["output"][hierarchy_key[i]], data[hierarchy_key[i]])
     # 结束时打印一下测试集结果
-    log.info("Test Average Loss: {}".format(loss_sum / (idx + 1)))
     log.info("Test Acc: {}".format([acc_metrics[i].eval() for i in range(hierarchy)]))
     temp_res = [f1_metrics[i].eval() for i in range(hierarchy)]
     # print("{} f1: {}".format(hierarchy_key[i], f1_metrics[i].eval()))

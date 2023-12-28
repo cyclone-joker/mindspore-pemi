@@ -244,7 +244,7 @@ class WARPClassifier(BaseClassifier):
         self.classify_layer = LabelEmbeddingLayer(embeddings=self.model.roberta.embeddings.word_embeddings,
                                                   num_cls=sum(self.num_cls) if isinstance(self.num_cls, list)
                                                   else self.num_cls,
-                                                  output_size=self.model.config.hidden_size,)
+                                                  output_size=self.model.config.hidden_size)
         # 将原本的transformer的word embedding层进行替换
         injector = PromptInjector(tokenizer=self.tokenizer,
                                   old_embeddings=self.model.roberta.embeddings.word_embeddings,
@@ -257,19 +257,12 @@ class WARPClassifier(BaseClassifier):
                       "attention_mask": inputs["attention_mask"],
                       "token_type_ids": inputs["token_type_ids"],
                       "return_dict": True}
-        # "masked_lm_positions": inputs["mask_pos"]}
-        # "masked_lm_weights": ms.ops.ones(8, dtype=ms.int32),
-        # "masked_lm_ids": ms.tensor([103]*batch_size, dtype=ms.int32)}
         model_outputs = self.model(**input_dict)
         # 获取平均的标识作为论元独立的表示
         # arg1_reprs, arg2_reprs = self.get_mean_reprs(model_outputs[1], inputs)
 
         assert inputs.get("mask_pos") is not None, "没有在输入模板当中设置<mask>的位置"
         final_reprs = model_outputs.logits[ms.ops.arange(0, batch_size, 1), inputs["mask_pos"], :]
-        # final_reprs = model_outputs.logits[tuple(range(0, 8, 1)), inputs["mask_pos"], :]
-        # final_reprs = ms.ops.zeros((batch_size, model_outputs.logits.shape[-1]))
-        # for i in range(batch_size):
-        #     final_reprs[batch_size] = model_outputs.logits[i, inputs['mask_pos'][i], :]
         output_dict = {"final_repr": final_reprs}
         # "arg1_repr": arg1_reprs,
         # "arg2_repr": arg2_reprs}
@@ -303,15 +296,15 @@ class MultiLabelClassifier(WARPClassifier):
         """
         if kwargs["hierarchy"] < 2:
             raise ValueError("multi label classifier must operate at least 2 hierarchical categories!")
-        # 使用父类方法进行初始化
+
         super(MultiLabelClassifier, self).__init__(**kwargs)
-        # super().__init__(**kwargs)
         self.label_mode = label_mode
         self.threshold = 1
         # 在初始化时计算range_list
         self.range_list = self._get_range_list()
         if self.label_mode in [4, 5, 6]:
-            self.weighted_list = self._get_weighted_list()
+            self.weight_units = WeightUnits(label_mode, kwargs["hierarchy"], self.threshold)
+            # self.insert_child_to_cell("WeightUnits", self.weight_units)
 
     def calculate_upper_label_embeddings(self):
         """
@@ -320,6 +313,7 @@ class MultiLabelClassifier(WARPClassifier):
         """
         if self.label_mode > 0:
             label_embeds = self.classify_layer.label_embeddings
+            # 获取最底层标签嵌入
             label_embed_list = [label_embeds(ms.ops.arange(sum(self.num_cls[:self.hierarchy - 1]),
                                                            sum(self.num_cls)))]
             # 创建空白向量，存储计算完成的向量
@@ -327,11 +321,13 @@ class MultiLabelClassifier(WARPClassifier):
                 label_embed_list.append(ms.ops.zeros(self.num_cls[j], self.model_hidden_size))
             # 按照归属关系进行聚类
             for idx in range(len(self.range_list)):
+                level = self.hierarchy - idx - 1
                 for i in range(len(self.range_list[idx])):
                     if idx == 0:
-                        # 原始向量从label embedding中获取
-                        lower_embeds = label_embeds(self.range_list[idx][i] + self.num_cls[1])
+                        # 对应的最底层向量从label embedding中获取
+                        lower_embeds = label_embeds(self.range_list[idx][i] + sum(self.num_cls[:self.hierarchy - 1]))
                     else:
+                        # 如果是中间层次，则直接从列表中取得即可
                         lower_embeds = label_embed_list[idx][self.range_list[idx][i]]
 
                     if self.range_list[idx][i].shape[0] > 1:
@@ -345,9 +341,11 @@ class MultiLabelClassifier(WARPClassifier):
                             label_embed_list[idx + 1][i] = ms.ops.where(x_max > x_min.abs(), x_max, x_min)
                         elif self.label_mode in [4, 6]:
                             # 进行加权求和的方式
-                            label_embed_list[idx + 1][i] = self.weighted_list[idx][i] @ lower_embeds
+                            label_embed_list[idx + 1][i] = getattr(self.weight_units, "l{}_weight_units".format(level))[
+                                                               i] @ lower_embeds
                         elif self.label_mode == 5:
-                            weighted_tensor = self.weighted_list[idx][i]
+                            # weighted_tensor = getattr(self.weight_units, "l{}_weight_units_{}".format(level, i))
+                            weighted_tensor = getattr(self.weight_units, "l{}_weight_units".format(level))[i]
                             label_embed_list[idx + 1][i] = (weighted_tensor / weighted_tensor.norm(dim=0, ord=1,
                                                                                                    keepdim=True)) \
                                                            @ lower_embeds
@@ -380,56 +378,25 @@ class MultiLabelClassifier(WARPClassifier):
         :return: None
         """
         label_embedding_list = self.calculate_upper_label_embeddings()
-        label_embeddings_weight = self.classify_layer.label_embeddings.weight
         index_list = [ms.ops.arange(0, self.num_cls[0])]
         if self.hierarchy == 3:
             index_list.insert(0, ms.ops.arange(self.num_cls[0], sum(self.num_cls[:2])))
         for idx in range(len(index_list)):
-            label_embeddings_weight[index_list[idx]] = label_embedding_list[idx + 1]
+            self.classify_layer.label_embeddings.weight[index_list[idx]] = label_embedding_list[idx + 1]
 
     def _get_range_list(self):
         """
         获取每个上层类别对应下层类别的列表，对于数量过少的类别进行过滤
+        顺序为细粒度到粗粒度的对应index
         :return:
         """
         range_list = [[ms.tensor([key for key, val in pro.items() if val > self.threshold])
                        for pro in BertConfig.top2second]]
         if self.hierarchy == 3:
+            # 细粒度对应关系插入到前面
             range_list.insert(0, [ms.tensor([key for key, val in pro.items() if val > self.threshold])
                                   for pro in BertConfig.second2conn])
         return range_list
-
-    def _get_weighted_list(self):
-        origin_list = [[{key: val for key, val in pro_dict.items() if val > self.threshold}
-                        for pro_dict in BertConfig.top2second]]
-        if self.hierarchy == 3:
-            origin_list.insert(0, [{key: val for key, val in pro_dict.items() if val > self.threshold}
-                                   for pro_dict in BertConfig.second2conn])
-        # 只有在4，5，6 情况下需要进行权重加和
-        if self.label_mode == 4:
-            weighted_list = []
-            for idx in range(len(origin_list)):
-                weighted_tensors = [ms.tensor([count for count in val.values()]).sqrt() for val in origin_list[idx]]
-                weighted_list.append([tensor / tensor.norm(dim=0, keepdim=True, ord=1) for tensor in weighted_tensors])
-        elif self.label_mode == 5:
-            # 需要创建相关权重参数矩阵
-            weighted_list = []
-            for idx in range(len(origin_list)):
-                weighted_list.append(
-                    [ms.Parameter(ms.ops.ones(len(val)).div(len(val)), requires_grad=True)
-                     for val in origin_list[idx]])
-        elif self.label_mode == 6:
-            weighted_list = []
-            beta = 0.9
-            for idx in range(len(origin_list)):
-                weight_tensors = [(1 - beta ** ms.tensor([count for count in val.values()])) / (1 - beta)
-                                  for val in origin_list[idx]]
-                weighted_list.append(
-                    [tensor / ms.ops.norm(tensor, dim=0, keepdim=True, ord=1) for tensor in weight_tensors])
-                # weighted_list.append([F.softmax(tensor, dim=0) for tensor in weight_tensors])
-        else:
-            raise ValueError("计算权重不应该选择label mode {}".format(self.label_mode))
-        return weighted_list
 
     def construct(self, inputs, with_output=True):
         output_dict = super().construct(inputs, False)
@@ -477,7 +444,7 @@ class PromptInjector(ms.nn.Cell):
             ms.ops.zeros((self.prompt_size, old_embeddings.embedding_size), dtype=ms.float32),
             requires_grad=True)
         self.prompt_params.set_data(self.embeddings(
-            ms.tensor([tokenizer.mask_token_id] * prompt_size)))
+            ms.tensor([tokenizer.mask_token_id] * prompt_size).copy()))
 
     def construct(self, inputs):
         embeddings_output = self.embeddings(inputs)
@@ -513,3 +480,46 @@ class LabelEmbeddingLayer(ms.nn.Cell):
     def construct(self, final_repr):
         all_label_embeddings = self.label_embeddings(ms.ops.arange(0, self.num_cls))
         return final_repr @ all_label_embeddings.t()
+
+
+class WeightUnits(ms.nn.Cell):
+    def __init__(self,
+                 label_mode,
+                 hierarchy,
+                 threshold):
+        super(WeightUnits, self).__init__()
+        self.label_mode = label_mode
+        self.hierarchy = hierarchy
+        self.threshold = threshold
+        origin_list = [[{key: val for key, val in pro_dict.items() if val > self.threshold}
+                        for pro_dict in BertConfig.top2second]]
+        if self.hierarchy == 3:
+            origin_list.insert(0, [{key: val for key, val in pro_dict.items() if val > self.threshold}
+                                   for pro_dict in BertConfig.second2conn])
+        # 只有在4，5，6 情况下需要进行权重加和
+        for idx in range(len(origin_list)):
+            level = self.hierarchy - idx - 1
+            if self.label_mode == 4:
+                weighted_tensors = [ms.tensor([count for count in val.values()]).sqrt() for val in origin_list[idx]]
+                setattr(self, "l{}_weight_units".format(level),
+                        [tensor / tensor.norm(dim=0, keepdim=True, ord=1)
+                         for tensor in weighted_tensors])
+            elif self.label_mode == 5:
+                setattr(self, "l{}_weight_units".format(level),
+                        ms.ParameterTuple([ms.Parameter(ms.ops.ones(len(val)).div(len(val)),
+                                                        requires_grad=True,
+                                                        name="l{}_weight_unit_{}".format(level, j))
+                                           for j, val in enumerate(origin_list[idx])]))
+                # for j, val in enumerate(origin_list[idx]):
+                #     setattr(self, "l{}_weight_units_{}".format(level, j),
+                #             ms.Parameter(ms.ops.ones(len(val)).div(len(val)),
+                #                          requires_grad=True))
+            elif self.label_mode == 6:
+                beta = 0.9
+                weight_tensors = [(1 - beta ** ms.tensor([count for count in val.values()])) / (1 - beta)
+                                  for val in origin_list[idx]]
+                setattr(self, "l{}_weight_units".format(level),
+                        [tensor / ms.ops.norm(tensor, dim=0, keepdim=True, ord=1)
+                         for tensor in weight_tensors])
+            else:
+                raise ValueError("计算权重不应该选择label mode {}".format(self.label_mode))

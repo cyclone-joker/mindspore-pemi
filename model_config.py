@@ -5,6 +5,7 @@
 
 import os
 
+
 class BertConfig:
     root_path = os.path.abspath(".").replace("model_code", "")
     # pdtb数据集加载位置

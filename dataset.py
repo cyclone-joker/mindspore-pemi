@@ -422,7 +422,7 @@ class PromptDataset:
             res_dict["mask_pos"] = mask_pos
         else:
             # 没有mask就表明cls的位置
-            res_dict["mask_pos"] = mindspore.tensor(0)
+            res_dict["mask_pos"] = np.array(0)
 
         res_dict.update({"input_ids": sen_reprs,
                          "attention_mask": attention_mask,
@@ -442,9 +442,9 @@ class PromptDataset:
         assert prompt_idx.shape[0] == len(self.special_tokens) - 2, print(arg1 + "\n" + arg2)
         res_dict["prompt_idx"] = prompt_idx
 
-        return res_dict["input_ids"], res_dict["attention_mask"], res_dict["token_type_ids"], res_dict["mask_pos"], \
-        res_dict["prompt_idx"], res_dict["sen_range"], res_dict["top_level"], res_dict["second_level"], res_dict[
-            "third_level"]
+        return (res_dict["input_ids"], res_dict["attention_mask"], res_dict["token_type_ids"],
+                res_dict["mask_pos"], res_dict["prompt_idx"], res_dict["sen_range"], res_dict["top_level"],
+                res_dict["second_level"], res_dict["third_level"])
 
     def __len__(self):
         return len(self.base_dataset)
