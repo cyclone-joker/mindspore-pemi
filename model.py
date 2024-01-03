@@ -241,15 +241,19 @@ class WARPClassifier(BaseClassifier):
         if self.freeze:
             self._freeze_bert_parameters()
 
-        self.classify_layer = LabelEmbeddingLayer(embeddings=self.model.roberta.embeddings.word_embeddings,
+        self.classify_layer = LabelEmbeddingLayer(embeddings=self.word_embeddings,
                                                   num_cls=sum(self.num_cls) if isinstance(self.num_cls, list)
                                                   else self.num_cls,
                                                   output_size=self.model.config.hidden_size)
         # 将原本的transformer的word embedding层进行替换
         injector = PromptInjector(tokenizer=self.tokenizer,
-                                  old_embeddings=self.model.roberta.embeddings.word_embeddings,
+                                  old_embeddings=self.word_embeddings,
                                   prompt_size=self.prompt_size)
         self.model.roberta.embeddings.word_embeddings = injector
+
+    @property
+    def word_embeddings(self):
+        return self.model.roberta.embeddings.word_embeddings
 
     def construct(self, inputs, with_output=True):
         batch_size = inputs["input_ids"].shape[0]
@@ -465,8 +469,8 @@ class LabelEmbeddingLayer(ms.nn.Cell):
                  output_size):
         """
         用于prompt模式下获取最终分类结果的层次
-        :param embeddings:
-        :param num_cls:
+        :param embeddings: 嵌入层
+        :param num_cls: 所有层次的类别总数
         :param output_size:
         """
         super(LabelEmbeddingLayer, self).__init__()
@@ -487,6 +491,12 @@ class WeightUnits(ms.nn.Cell):
                  label_mode,
                  hierarchy,
                  threshold):
+        """
+        权重单元实现类
+        :param label_mode:
+        :param hierarchy:
+        :param threshold:
+        """
         super(WeightUnits, self).__init__()
         self.label_mode = label_mode
         self.hierarchy = hierarchy
