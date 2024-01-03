@@ -374,7 +374,7 @@ class MultiLabelClassifier(WARPClassifier):
         if self.hierarchy == 3:
             index_list.insert(0, ms.ops.arange(self.num_cls[0], sum(self.num_cls[:2])))
         for idx in range(len(index_list)):
-            self.classify_layer.label_embeddings.weight[index_list[idx]].set_data(label_embedding_list[idx + 1])
+            self.classify_layer.label_embeddings.weight[index_list[idx]] = label_embedding_list[idx + 1]
 
     def _get_range_list(self):
         """
