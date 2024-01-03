@@ -8,7 +8,8 @@ import mindspore as ms
 import os
 from model_config import BertConfig
 import sys
-from mindnlp.transformers import BertTokenizer, BertModel, RobertaForMaskedLM, RobertaTokenizer
+from mindspore.common.initializer import initializer, Normal
+from mindnlp.transformers import BertModel, RobertaForMaskedLM
 from global_func import obtain_max_id
 import json
 from log import log
@@ -111,7 +112,7 @@ class BaseClassifier(mindspore.nn.Cell):
         """
         对模型参数进行保存
         :param repeat_time: 重复序列，对于重复实验或者k-折交叉验证比较有用
-        :param save_path:
+        :param save_path: 保存位置，如果给出具体的保存位置则不需要使用默认保存规则
         :param step: 训练步数/迭代epoch数
         :return:
         """
@@ -124,40 +125,23 @@ class BaseClassifier(mindspore.nn.Cell):
                 if repeat_time > 0 or self.save_count > 0:
                     self.saved_id = obtain_max_id()
                 else:
-                    self.saved_id = obtain_max_id() + 1
+                    self.saved_id = obtain_max_id(suffix="Multi-level_Prompt") + 1
             dir_name = os.path.join(self.model_save_path,
                                     "Multi-level_Prompt_{}".format(self.saved_id),
                                     "checkpoint_{:06d}".format(repeat_time * 100000 + step))
-        # print(dir_name)
+        log.info("保存checkpoint位置为：{}".format(dir_name))
+
         if not os.path.exists(dir_name):
             os.makedirs(dir_name)
         file_path = os.path.join(dir_name, "model.pkl")
         param_path = os.path.join(dir_name, "params.json")
         config_dict = self.get_basic_params()
         config_dict.pop("tokenizer")
-        ms.save_checkpoint(self.state_dict(), file_path)
+        ms.save_checkpoint(self.trainable_params(), file_path)
         param_file = open(param_path, "w")
         json.dump(config_dict, param_file)
         param_file.close()
         self.save_count += 1
-
-    def state_dict(self, *args, destination=None, prefix="", keep_vars=False):
-        """
-        重写state dict保存机制
-        :param destination:
-        :param prefix:
-        :param keep_vars:
-        :return:
-        """
-        states = super().state_dict(prefix=prefix, keep_vars=keep_vars)
-        if self.freeze:
-            # 保证只保留下面几部分的参数，其他都可以扔掉
-            key_to_remove = [key for key in states.keys() if "prompt_params" not in key
-                             and "classify_layer" not in key and "weighted_list" not in key]
-            for key in key_to_remove:
-                del states[key]
-
-        return states
 
     @classmethod
     def load_model(cls,
@@ -174,13 +158,12 @@ class BaseClassifier(mindspore.nn.Cell):
         :param limits: 对于加载区域的局限
         :param param_dict: 分类器参数列表
         :param load_path: 加载路径，可以规定要加载的其他路径
-        :param limits: 100000以下是source，100000+为target，主要用于区分同时使用两个模型的情况
         :return:
         """
         # 首先创建模型
         if classifier is None:
             classifier_name = cls.__name__
-            classifier = getattr(sys.modules["model_code.prompt_roberta.kernel.classifier"],
+            classifier = getattr(sys.modules["model"],
                                  classifier_name)(**param_dict)
         if limits is None:
             limits = [repeat_time * 100000, (repeat_time + 1) * 100000]
@@ -190,7 +173,7 @@ class BaseClassifier(mindspore.nn.Cell):
         else:
             dir_name = os.path.join(BertConfig.model_save_path,
                                     "Multi-level_Prompt_{}".format(param_dict["saved_id"]))
-            print(dir_name)
+        log.info("加载路径为：{}".format(dir_name))
 
         if os.path.exists(dir_name):
             # 找到最后一次保存的检查点
@@ -202,13 +185,13 @@ class BaseClassifier(mindspore.nn.Cell):
             # 将保存号保留下来
             classifier.saved_id = param_dict["saved_id"]
             if os.path.exists(model_path):
-                log.info("load pretrained model for {} dev step ...".format(max_step))
+                log.info("从{}步检查点加载模型...".format(max_step))
                 param_dict = ms.load_checkpoint(model_path)
                 ms.load_param_into_net(classifier, param_dict)
             else:
-                log.info("Checkpoints don't exist. Init pretrained model...")
+                log.info("对应Checkpoints不存在，将创建初始预训练模型...")
         else:
-            log.info("Init pretrained model...")
+            log.info("未发现对应路径，创建初始预训练模型...")
 
         return classifier
 
@@ -228,6 +211,11 @@ class WARPClassifier(BaseClassifier):
                  num_cls,
                  **kwargs
                  ):
+        """
+        使用软提示进行训练的分类器
+        :param num_cls:
+        :param kwargs:
+        """
         kwargs["class_mode"] = 0
         super(WARPClassifier, self).__init__(**kwargs)
         self.num_cls = num_cls
@@ -245,11 +233,12 @@ class WARPClassifier(BaseClassifier):
                                                   num_cls=sum(self.num_cls) if isinstance(self.num_cls, list)
                                                   else self.num_cls,
                                                   output_size=self.model.config.hidden_size)
-        # 将原本的transformer的word embedding层进行替换
-        injector = PromptInjector(tokenizer=self.tokenizer,
-                                  old_embeddings=self.word_embeddings,
-                                  prompt_size=self.prompt_size)
-        self.model.roberta.embeddings.word_embeddings = injector
+        if len(self.tokenizer.additional_special_tokens) > 2:
+            # 将原本的transformer的word embedding层进行替换
+            injector = PromptInjector(tokenizer=self.tokenizer,
+                                      old_embeddings=self.word_embeddings,
+                                      prompt_size=self.prompt_size)
+            self.model.roberta.embeddings.word_embeddings = injector
 
     @property
     def word_embeddings(self):
@@ -276,7 +265,6 @@ class WARPClassifier(BaseClassifier):
 
     def get_basic_params(self):
         basic_params = super(WARPClassifier, self).get_basic_params()
-        basic_params["init_prompt_with_embeddings"] = self.init_prompt_with_embeddings
         basic_params["num_cls"] = self.num_cls
         return basic_params
 
@@ -386,7 +374,7 @@ class MultiLabelClassifier(WARPClassifier):
         if self.hierarchy == 3:
             index_list.insert(0, ms.ops.arange(self.num_cls[0], sum(self.num_cls[:2])))
         for idx in range(len(index_list)):
-            self.classify_layer.label_embeddings.weight[index_list[idx]] = label_embedding_list[idx + 1]
+            self.classify_layer.label_embeddings.weight[index_list[idx]].set_data(label_embedding_list[idx + 1])
 
     def _get_range_list(self):
         """
@@ -435,7 +423,7 @@ class PromptInjector(ms.nn.Cell):
         """
         用于替换原本embedding的类
         :param tokenizer: 分词器，主要用于获取词表中某些词的id
-        :param old_embeddings: 原始embedding
+        :param old_embeddings: 原始词表嵌入
         :param prompt_size: 插入的软提示词数
         """
         super(PromptInjector, self).__init__()
@@ -445,10 +433,8 @@ class PromptInjector(ms.nn.Cell):
         self.prompt_ids = [i for i in range(self.vocab_size - self.prompt_size - 2,
                                             self.vocab_size - 2)]
         self.prompt_params = ms.Parameter(
-            ms.ops.zeros((self.prompt_size, old_embeddings.embedding_size), dtype=ms.float32),
+            ms.ops.deepcopy(self.embeddings(ms.tensor([tokenizer.mask_token_id] * prompt_size))),
             requires_grad=True)
-        self.prompt_params.set_data(self.embeddings(
-            ms.tensor([tokenizer.mask_token_id] * prompt_size).copy()))
 
     def construct(self, inputs):
         embeddings_output = self.embeddings(inputs)
@@ -471,15 +457,21 @@ class LabelEmbeddingLayer(ms.nn.Cell):
         用于prompt模式下获取最终分类结果的层次
         :param embeddings: 嵌入层
         :param num_cls: 所有层次的类别总数
-        :param output_size:
+        :param output_size: 输出维度
         """
         super(LabelEmbeddingLayer, self).__init__()
         self.output_size = output_size
         self.num_cls = num_cls
-        self.label_embeddings = ms.nn.Embedding(self.num_cls, self.output_size)
+        self.label_embeddings = ms.nn.Embedding(vocab_size=self.num_cls,
+                                                embedding_size=self.output_size)
+                                                # embedding_table=initializer(
+                                                #     Normal(mean=embeddings.weight.mean().item(),
+                                                #            sigma=embeddings.weight.std().item()),
+                                                #     [self.num_cls, self.output_size],
+                                                #     ms.float32))
         self.label_embeddings.weight.set_data(ms.ops.normal((self.num_cls, self.output_size),
                                                             mean=embeddings.weight.mean().item(),
-                                                            stddev=embeddings.weight.std().item()))
+                                                            stddev=embeddings.weight.std().item()).copy())
 
     def construct(self, final_repr):
         all_label_embeddings = self.label_embeddings(ms.ops.arange(0, self.num_cls))

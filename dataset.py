@@ -438,9 +438,11 @@ class PromptDataset:
 
         self._get_input_dict([arg1, arg2], res_dict)
         prompt_idx = self._calculate_prompt_idx(res_dict["input_ids"])
-        # 对于超越长度的句子，进行一步更改，将<prompt>标识重新加回去
         assert prompt_idx.shape[0] == len(self.special_tokens) - 2, print(arg1 + "\n" + arg2)
-        res_dict["prompt_idx"] = prompt_idx
+        if prompt_idx.shape[0] == 0:
+            res_dict["prompt_idx"] = np.array(0)
+        else:
+            res_dict["prompt_idx"] = prompt_idx
 
         return (res_dict["input_ids"], res_dict["attention_mask"], res_dict["token_type_ids"],
                 res_dict["mask_pos"], res_dict["prompt_idx"], res_dict["sen_range"], res_dict["top_level"],
