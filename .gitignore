@@ -1,5 +1,6 @@
 .idea
+.mindnlp
 model_data/logs
 model_data/pretrained_model
 model_data/saved_models
-model_data/dataset
+model_data/dataset/*.csv

@@ -41,11 +41,9 @@ class BaseClassifier(mindspore.nn.Cell):
             self.model = RobertaForMaskedLM.from_pretrained(model_name)
         else:
             self.model = BertModel.from_pretrained(model_name)
-        # auto_mixed_precision(self.model, 'O1')
 
         self.current_vocab_size = len(self.tokenizer)
         self.model.resize_token_embeddings(self.current_vocab_size)
-        # 暂且设置prompt数量就为20
         self.prompt_size = len(self.tokenizer.additional_special_tokens) - 2
         log.info("prompt size: {}".format(self.prompt_size))
 
@@ -133,7 +131,7 @@ class BaseClassifier(mindspore.nn.Cell):
 
         if not os.path.exists(dir_name):
             os.makedirs(dir_name)
-        file_path = os.path.join(dir_name, "model.pkl")
+        file_path = os.path.join(dir_name, "model")
         param_path = os.path.join(dir_name, "params.json")
         config_dict = self.get_basic_params()
         config_dict.pop("tokenizer")
@@ -181,7 +179,7 @@ class BaseClassifier(mindspore.nn.Cell):
                                      prefix="checkpoint",
                                      limits=limits)
             file_path = os.path.join(dir_name, "checkpoint_{:06d}".format(max_step))
-            model_path = os.path.join(file_path, "model.pkl")
+            model_path = os.path.join(file_path, "model.ckpt")
             # 将保存号保留下来
             classifier.saved_id = param_dict["saved_id"]
             if os.path.exists(model_path):
@@ -303,6 +301,13 @@ class MultiLabelClassifier(WARPClassifier):
         从底层计算所有层次的类别嵌入，这种方式是从子类嵌入中获取父类的内容
         :return:
         """
+        def calculate_weighted_embeds(w, embeds):
+            return (w/w.norm(dim=0, ord=1, keepdim=True)) @ embeds
+        weighted_grad_fn = ms.value_and_grad(calculate_weighted_embeds,
+                                             grad_position=(0, 1),
+                                             weights=None, has_aux=False)
+        grads_list = []
+
         if self.label_mode > 0:
             label_embeds = self.classify_layer.label_embeddings
             # 获取最底层标签嵌入
@@ -338,16 +343,19 @@ class MultiLabelClassifier(WARPClassifier):
                         elif self.label_mode == 5:
                             # weighted_tensor = getattr(self.weight_units, "l{}_weight_units_{}".format(level, i))
                             weighted_tensor = getattr(self.weight_units, "l{}_weight_units".format(level))[i]
-                            label_embed_list[idx + 1][i] = (weighted_tensor / weighted_tensor.norm(dim=0, ord=1,
-                                                                                                   keepdim=True)) \
-                                                           @ lower_embeds
+                            upper_tensor, grads = weighted_grad_fn(weighted_tensor, lower_embeds)
+                            grads_list.append(grads[0])
+                            label_embed_list[idx + 1][i] = upper_tensor
+                            # label_embed_list[idx + 1][i] = (weighted_tensor / weighted_tensor.norm(dim=0, ord=1,
+                            #                                                                        keepdim=True)) \
+                            #                                @ lower_embeds
                     else:
                         # 如果下层类别只有一个子类，直接复制到上级即可
                         label_embed_list[idx + 1][i] = lower_embeds
         else:
             label_embed_list = self.get_label_embeddings()
 
-        return label_embed_list
+        return label_embed_list, tuple(grads_list)
 
     def get_label_embeddings(self) -> list:
         """
@@ -393,17 +401,20 @@ class MultiLabelClassifier(WARPClassifier):
     def construct(self, inputs, with_output=True):
         output_dict = super().construct(inputs, False)
         if self.phase == 'train':
-            third_level, second_level, top_level = self.calculate_upper_label_embeddings()
+            embeds_list, grads_tuple = self.calculate_upper_label_embeddings()
         else:
-            third_level, second_level, top_level = self.get_label_embeddings()
-        label_embeddings_dict = {"top_level": top_level, "second_level": second_level}
+            embeds_list = self.get_label_embeddings()
+            grads_tuple = tuple()
+        label_embeddings_dict = {"top_level": embeds_list[2], "second_level": embeds_list[1]}
         if self.hierarchy == 3:
-            label_embeddings_dict["third_level"] = third_level
+            label_embeddings_dict["third_level"] = embeds_list[0]
         output_dict["label_embeddings"] = label_embeddings_dict
         # 进行分类
         if with_output:
             output_dict["output"] = {key: output_dict["final_repr"] @ val.t() for key, val in
                                      label_embeddings_dict.items()}
+        # 将weight_units的梯度保存
+        output_dict["weight_units_grads"] = grads_tuple
 
         return output_dict
 

@@ -101,9 +101,12 @@ def once_process(args,
         for i in range(args.hierarchy):
             loss = loss_fn(output["output"][hierarchy_key[i]], data[hierarchy_key[i]])
             loss_total += loss
-        return loss_total, output["output"]
+        return loss_total, output
 
-    grad_fn = ms.value_and_grad(fn=forward_fn, has_aux=False, grad_position=None, weights=classifier.trainable_params())
+    grad_fn = ms.value_and_grad(fn=forward_fn,
+                                has_aux=False,
+                                grad_position=None,
+                                weights=classifier.trainable_params())
     acc_metrics = [Accuracy('classification'), Accuracy('classification'),
                    Accuracy('classification')]
     f1_metrics = [F1(), F1(), F1()]
@@ -118,26 +121,25 @@ def once_process(args,
             for idx, data in enumerate(
                     loader_list[0].create_dict_iterator(num_epochs=args.epochs, output_numpy=False)):
                 total_step += 1
-                (loss, logits), grads = grad_fn(data)
-                grads = ms.ops.clip_by_global_norm(grads, 5.0)
+                (loss, outputs), grads = grad_fn(data)
+                if args.label_mode == 5:
+                    grads = grads[:2] + outputs["weight_units_grads"]
+                grads = ms.ops.clip_by_global_norm(grads, 1.0)
                 optimizer.learning_rate = warmup_lr(ms.Tensor(total_step, ms.float32))
                 optimizer(grads)
                 # loss = ms.ops.depend(loss, optimizer(grads))
                 loss_sum += loss.asnumpy()
 
-                # # 保存一下前面层次生成的标签嵌入
-                # classifier.save_label_embeddings()
                 for i in range(args.hierarchy):
-                    acc_metrics[i].update(ms.ops.softmax(logits[hierarchy_key[i]], axis=-1),
+                    acc_metrics[i].update(outputs["output"][hierarchy_key[i]],
                                           data[hierarchy_key[i]])
-                    f1_metrics[i].update(ms.ops.softmax(logits[hierarchy_key[i]], axis=-1),
+                    f1_metrics[i].update(outputs["output"][hierarchy_key[i]],
                                          data[hierarchy_key[i]])
                 # 打印训练集结果
                 if total_step % args.log_freq == 0:
                     print()
-                    # print([getattr(classifier.weight_units, "l1_weight_units_{}".format(i)).value() for i in range(4)])
                     # print(classifier.get_label_embeddings()[:4])
-                    # print([param.value() for param in classifier.weight_units.l2_weight_units])
+                    print([param.value() for param in classifier.weight_units.l1_weight_units])
                     log.info("Current Learning Rate: {:.6f}".format(optimizer.learning_rate.item()))
                     log.info("Epoch {} Step {} Average Loss: {}".format(epoch + 1, total_step, loss_sum / (idx + 1)))
                     log.info("Epoch {} Step {} Acc: {}".format(epoch + 1, total_step,
@@ -160,6 +162,7 @@ def once_process(args,
             clear_metrics([acc_metrics, f1_metrics])
             if is_break:
                 break
+            # 保存一下前面层次生成的标签嵌入
             classifier.save_label_embeddings()
     # 在测试集上进行测试
     test_process(loader=loader_list[2],
@@ -200,7 +203,7 @@ def test_process(loader,
             eval_output = model(eval_data)
             for metric_list in metrics:
                 for i in range(args.hierarchy):
-                    metric_list[i].update(ms.ops.softmax(eval_output["output"][hierarchy_key[i]], axis=-1),
+                    metric_list[i].update(eval_output["output"][hierarchy_key[i]],
                                           eval_data[hierarchy_key[i]])
             tbar.update(1)
     acc_res = [round(metrics[0][i].eval() * 100, 6) for i in range(args.hierarchy)]
@@ -208,6 +211,7 @@ def test_process(loader,
     # 结束时打印一下测试集结果
     log.info("{} Acc: {}".format(mode, acc_res))
     log.info("{} Macro f1: {}".format(mode, f1_res))
+    model.set_train(True)
     return acc_res, f1_res
 
 

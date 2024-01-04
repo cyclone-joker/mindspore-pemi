@@ -1,0 +1,4 @@
+mindnlp @ file://model_data/wheel/mindnlp-0.2.0.20231227-py3-none-any.whl#sha256=06abc7070bc84be365f158747f85aea600cb1f8c3cd97cfa56100908cc65684b
+mindspore @ https://ms-release.obs.cn-north-4.myhuaweicloud.com/2.2.10/MindSpore/unified/x86_64/mindspore-2.2.10-cp38-cp38-linux_x86_64.whl#sha256=f190fa0f74632407ca20f3bd162fafc47333f73b6ccaa0b3b6853af63824f963
+pandas==2.0.3
+tqdm==4.66.1
