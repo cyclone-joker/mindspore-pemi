@@ -5,6 +5,7 @@
 
 from model_config import BertConfig
 import os
+from log import log
 from dataset import PromptDataset
 
 
@@ -51,14 +52,31 @@ def normal_dataset_split(dataset):
         for idx in range(len(sections)):
             dataset_list[idx].base_dataset.corpus = dataset_list[idx].base_dataset.corpus[dataset_list[idx].base_dataset.corpus["Section"].isin(sections[idx])]
             dataset_list[idx].base_dataset.corpus.reset_index(inplace=True, drop=True)
-            # dataset_list[idx] = PromptDataset(dataset_list[idx], input_form="<p:4><sen1><p:4><mask><p:4><sep><p:4><sen2><p:4>")
-        # indices = [origin_dataset.corpus[origin_dataset.corpus["Section"].isin(sections[j])].index.tolist()
-        #            for j in range(len(sections))]
-        # return [Subset(dataset, indices[i]) for i in range(len(sections))]
         return dataset_list
     else:
         raise Exception("暂无对应的dataset分割方式！")
-    #     train_num = int(len(origin_dataset) * 0.8)
-    #     eval_num = int(len(origin_dataset) * 0.1)
-    #     test_num = len(origin_dataset) - train_num - eval_num
-    #     return random_split(dataset, [train_num, eval_num, test_num])
+
+
+def calculate_average_result(metric_dict,
+                             final_dict,
+                             cur_repeat,
+                             total_repeat):
+    """
+    对最终结果进行平均加和的操作，方便进行统计
+    :param final_dict: 最终结果字典，用于存储各迭代次数的结果平均
+    :param metric_dict: 统计结果字典
+    :param cur_repeat: 当前重复次数，用验证是否进行取余和输出
+    :param total_repeat: 总共重复实验次数
+    :return:
+    """
+    for key in metric_dict.keys():
+        if isinstance(metric_dict[key], list):
+            for h in metric_dict[key]:
+                final_dict[key][h] = (final_dict.get(key, [0.0]*len(metric_dict[key]))[h] +
+                                      metric_dict[key][h]/total_repeat)
+            else:
+                final_dict[key] = final_dict.get(key, 0.0) + metric_dict[key]/total_repeat
+    # 最后一轮平均完成后汇报结果
+    if cur_repeat == total_repeat:
+        for key in final_dict.keys():
+            log.info("Averaged Test {0}: {1}".format(key, final_dict[key]))

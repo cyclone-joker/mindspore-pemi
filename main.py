@@ -47,14 +47,16 @@ def main_process(args):
                                                       "token_type_ids", "mask_pos", "prompt_idx", "sen_range",
                                                       "top_level", "second_level", "third_level"],
                                         shuffle=False).batch(args.batch_size) for d in dataset_list]
-
+    # 统计最终平均结果的字典
+    final_dict = {}
     for repeat_time in range(args.total_repeat):
         log.info("重复实验计数：{}".format(repeat_time + 1))
         once_process(args=args,
                      repeat_time=repeat_time,
                      loader_list=dataloader_list,
                      source_dataset=d1,
-                     seed=100 + repeat_time)
+                     seed=100 + repeat_time,
+                     final_dict=final_dict)
 
 
 def clear_metrics(metrics):
@@ -67,7 +69,8 @@ def once_process(args,
                  repeat_time,
                  loader_list,
                  source_dataset,
-                 seed=100):
+                 seed=100,
+                 final_dict=None):
     ms.set_seed(seed)
     np.random.seed(seed)
     hierarchy_key = ["top_level", "second_level", "third_level"]
@@ -85,9 +88,9 @@ def once_process(args,
     log.info("trainable params: {}".format(classifier.trainable_params()))
     log.info("hierarchical sense number: {}".format(source_dataset.num_cls))
     log.info("learning rate: {}".format(args.learning_rate))
-    train_steps = len(loader_list[0])*args.epochs
+    train_steps = len(loader_list[0]) * args.epochs
     # 设置warmup长度为总步数的10%
-    warmup_lr = ms.nn.WarmUpLR(args.learning_rate, train_steps//10)
+    warmup_lr = ms.nn.WarmUpLR(args.learning_rate, train_steps // 10)
     optimizer = ms.nn.Adam(params=classifier.trainable_params(), learning_rate=args.learning_rate)
 
     # 是否选择使用早停机制
@@ -146,7 +149,8 @@ def once_process(args,
                                                                [round(acc_metrics[i].eval() * 100, 6) for i in
                                                                 range(args.hierarchy)]))
                     log.info("Epoch {} Step {} Macro F1: {}".format(epoch + 1, total_step,
-                                                                    [round(f1_metrics[i].eval(average=True) * 100, 6) for i in
+                                                                    [round(f1_metrics[i].eval(average=True) * 100, 6)
+                                                                     for i in
                                                                      range(args.hierarchy)]))
                 # 进行验证集测试，用于选出最佳模型
                 if args.early_stopping and total_step % args.dev_step == 0:
@@ -165,12 +169,17 @@ def once_process(args,
             # 保存一下前面层次生成的标签嵌入
             classifier.save_label_embeddings()
     # 在测试集上进行测试
-    test_process(loader=loader_list[2],
-                 model=classifier,
-                 metrics=[acc_metrics, f1_metrics],
-                 repeat_time=repeat_time,
-                 mode="Test",
-                 load_best_model=True)
+    test_acc, test_f1 = test_process(loader=loader_list[2],
+                                     model=classifier,
+                                     metrics=[acc_metrics, f1_metrics],
+                                     repeat_time=repeat_time,
+                                     mode="Test",
+                                     load_best_model=True)
+    # 打印多次重复实验平均结果
+    calculate_average_result({"Acc": test_acc, "Macro-F1": test_f1},
+                             final_dict,
+                             repeat_time,
+                             total_repeat=args.total_repeat)
 
 
 def test_process(loader,
@@ -219,19 +228,19 @@ if __name__ == '__main__':
     # os.environ["CUDA_DEVICE_ORDER"] = "PCI_BUS_ID"
     # os.environ["CUDA_VISIBLE_DEVICES"] = "0,1"
     parser = argparse.ArgumentParser(description="PEMI Mindspore")
-    # 输入设置
-    parser.add_argument("-im", "--input_form", default="<p:4><sen1><p:4><mask><p:4><sep><p:4><sen2><p:4>", type=str)
-    # parser.add_argument("-im", "--input_form", default="<cls><sen1><sen2>", type=str)
-    parser.add_argument("-dn", "--dataset_name", default="PDTBDataset", type=str)
+    # 基本设置
     parser.add_argument('-d', '--device', default="GPU", type=str, choices=["GPU", "CPU", "Ascend"])
     parser.add_argument('-di', '--device_id', nargs='+')
-    # 分类器挑选
-    parser.add_argument("-hi", "--hierarchy", default=3, type=int)
+    parser.add_argument("-dn", "--dataset_name", default="PDTBDataset", type=str)
+    # 模型设置
+    parser.add_argument("-im", "--input_form", default="<p:4><sen1><p:4><mask><p:4><sep><p:4><sen2><p:4>", type=str)
+    # parser.add_argument("-im", "--input_form", default="<cls><sen1><sen2>", type=str)
+    parser.add_argument("-hi", "--hierarchy", default=3, type=int, choices=[1, 2, 3])
     parser.add_argument("-mn", "--model_name", default="roberta-base", type=str)
     parser.add_argument("-f", "--freeze", action="store_true")
     # parser.add_argument("-cn", "--classifier_name", default="MultiLabelClassifier", type=str)
-    parser.add_argument("-lm", "--label_mode", default=0, type=int)
-    # 训练器设置
+    parser.add_argument("-lm", "--label_mode", default=0, type=int, choices=range(1, 7))
+    # 训练设置
     parser.add_argument("-lr", "--learning_rate", default=1e-3, type=float)
     parser.add_argument("-lf", "--log_freq", default=100, type=int)
     parser.add_argument("-bs", "--batch_size", default=8, type=int)

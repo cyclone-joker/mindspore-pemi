@@ -377,7 +377,7 @@ class MultiLabelClassifier(WARPClassifier):
         在梯度完成后将前面层次的标签嵌入保存到Embedding当中
         :return: None
         """
-        label_embedding_list = self.calculate_upper_label_embeddings()
+        label_embedding_list, grad_tuple = self.calculate_upper_label_embeddings()
         index_list = [ms.ops.arange(0, self.num_cls[0])]
         if self.hierarchy == 3:
             index_list.insert(0, ms.ops.arange(self.num_cls[0], sum(self.num_cls[:2])))

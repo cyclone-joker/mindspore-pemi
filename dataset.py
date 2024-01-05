@@ -313,10 +313,63 @@ class PDTBDataset(BaseDataset):
         return [len(self.relation_hierarchies[self.label_keys[i]]) for i in range(self.hierarchy)]
 
 
-# @Time 2022/9/7 16:41
-# @Author: Joker
-# @File: prompt_dataset.py
-# @Software: PyCharm
+class PDTB3Dataset(PDTBDataset):
+    def __init__(self, **kwargs):
+        """
+        对PDTB 3.0数据集进行分类
+        :param kwargs:
+        """
+        kwargs["file_name"] = "PDTB3"
+        kwargs["use_cols"] = ["Relation", "Section", "Conn1", "Conn2", "SClass1A", "SClass2A", "Arg1_RawText",
+                              "Arg2_RawText"]
+        self.relation_key = "SClass1A"
+        self.expand_relation_key = "SClass2A"
+        self.label_keys = ["top_level", "second_level", "third_level"]
+        # 使用基类的初始化
+        super(PDTBDataset, self).__init__(**kwargs)
+        self.relation_hierarchies = {}
+        for i in range(min(self.hierarchy, 2)):
+            self.relation_hierarchies[self.label_keys[i]] = \
+                self.corpus[self.relation_key].str.split(".").map(
+                    lambda x: ".".join(x[:i + 1])).value_counts().index.tolist()
+            self.relation_hierarchies[self.label_keys[i]].sort()
+        # 连接词分类表
+        if self.hierarchy == 3:
+            self.conn_projections = self.obtain_conn_projections()
+            conn_list = list(set([val for val in self.conn_projections.values()]))
+            conn_list.sort()
+            self.relation_hierarchies["third_level"] = conn_list
+
+        self._class_filter([0, 100, 0])
+        self.corpus.reset_index(inplace=True, drop=True)
+
+    def obtain_conn_projections(self):
+        """
+        创建连接词id映射字典
+        :return:
+        """
+        import csv
+        import os
+        csv_file = open(os.path.join(BertConfig.dataset_path, "pdtb3_implicit_connectives.csv"), "r", encoding="utf-8")
+        csv_reader = csv.reader(csv_file)
+        next(csv_reader)
+        conn_projections = {line[1].strip(): line[0].strip() for line in csv_reader}
+        return conn_projections
+
+    def operate_hierarchical_labels(self, res_dict, idx):
+        """
+        获取样例三个层次的对应标签
+        :param res_dict:
+        :param idx:
+        :return:
+        """
+        levels = []
+        for i in range(min(self.hierarchy, 2)):
+            levels.append(".".join(self.corpus.loc[idx, self.relation_key].split(".")[:i + 1]))
+        if self.hierarchy == 3:
+            levels.append(self.conn_projections[self.corpus.loc[idx, "Conn1"]])
+        for i in range(self.hierarchy):
+            res_dict[self.label_keys[i]] = self.relation_hierarchies[self.label_keys[i]].index(levels[i])
 
 
 class PromptDataset:
