@@ -1,36 +1,9 @@
 # Mindspore-PEMI
 
 #### 介绍
-[Infusing Hierarchical Guidance into Prompt Tuning: A Parameter-Efficient Framework for Multi-level Implicit Discourse Relation Recognition](https://aclanthology.org/2023.acl-long.357.pdf)（ACL 2023）
+*[Infusing Hierarchical Guidance into Prompt Tuning: A Parameter-Efficient Framework for Multi-level Implicit Discourse Relation Recognition](https://aclanthology.org/2023.acl-long.357.pdf)（ACL 2023）*
 
 Mindspore代码实现
-
-#### 目录结构
-├─[dataset.py](dataset.py)  内容  
-
-├─[global_func.py](global_func.py)  
-
-├─[log.py](log.py)  
-
-├─[main.py](main.py)  
-
-├─[model.py](model.py)  
-
-├─[model_config.py](model_config.py)  
-
-├─[early_stopping.py](early_stopping.py)  
-
-├─model_data
-
-|     ├─dataset  
-
-|     |   └PDTB3_connectives.txt
-
-|     |   └PDTB_connectives.txt
-
-|     ├─wheel  
-
-|     |   └mindnlp-0.2.0.20231227-py3-none-any.whl
 
 #### 模型架构
 整个模型按照论文中叙述分为三个部分： 
@@ -44,6 +17,22 @@ Mindspore代码实现
 整体模型架构图如下：
 
 <img src="https://joker-typora-bucket.oss-cn-beijing.aliyuncs.com/picture/typora/2024/01/04/2024-01-04%2023:12:56.jpg" style="zoom: 33%;" />
+
+#### 目录结构
+
+├─[dataset.py](dataset.py)  数据集处理文件  
+├─[global_func.py](global_func.py)  通用函数文件  
+├─[log.py](log.py)   日志函数文件   
+├─[main.py](main.py)   主程序文件   
+├─[model.py](model.py)   模型文件  
+├─[model_config.py](model_config.py)  模型基本超参数文件  
+├─[early_stopping.py](early_stopping.py)  早停机制类文件  
+├─model_data  模型依赖数据文件夹  
+|     ├─dataset  
+|     |   └PDTB3_connectives.txt  
+|     |   └PDTB_connectives.txt  
+|     ├─wheel  
+|     |   └mindnlp-0.2.0.20231227-py3-none-any.whl
 
 #### 运行教程
 

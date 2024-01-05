@@ -133,6 +133,8 @@ def once_process(args,
                 # loss = ms.ops.depend(loss, optimizer(grads))
                 loss_sum += loss.asnumpy()
 
+                # 保存一下前面层次生成的标签嵌入
+                classifier.save_label_embeddings()
                 for i in range(args.hierarchy):
                     acc_metrics[i].update(outputs["output"][hierarchy_key[i]],
                                           data[hierarchy_key[i]])
@@ -166,8 +168,6 @@ def once_process(args,
             clear_metrics([acc_metrics, f1_metrics])
             if is_break:
                 break
-            # 保存一下前面层次生成的标签嵌入
-            classifier.save_label_embeddings()
     # 在测试集上进行测试
     test_acc, test_f1 = test_process(loader=loader_list[2],
                                      model=classifier,
