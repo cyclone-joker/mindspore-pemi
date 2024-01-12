@@ -71,11 +71,12 @@ def calculate_average_result(metric_dict,
     """
     for key in metric_dict.keys():
         if isinstance(metric_dict[key], list):
-            for h in metric_dict[key]:
-                final_dict[key][h] = (final_dict.get(key, [0.0]*len(metric_dict[key]))[h] +
-                                      metric_dict[key][h]/total_repeat)
-            else:
-                final_dict[key] = final_dict.get(key, 0.0) + metric_dict[key]/total_repeat
+            if not final_dict.get(key, None):
+                final_dict[key] = [0.0]*len(metric_dict[key])
+            for i in range(len(metric_dict[key])):
+                final_dict[key][i] = final_dict[key][i] + metric_dict[key][i]/total_repeat
+        else:
+            final_dict[key] = final_dict.get(key, 0.0) + metric_dict[key]/total_repeat
     # 最后一轮平均完成后汇报结果
     if cur_repeat == total_repeat:
         for key in final_dict.keys():

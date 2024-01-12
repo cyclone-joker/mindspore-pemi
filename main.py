@@ -12,6 +12,7 @@ from mindspore.dataset import GeneratorDataset
 from log import log
 from early_stopping import EarlyStopping
 from tqdm import tqdm
+import copy
 import argparse
 import sys
 
@@ -84,10 +85,10 @@ def once_process(args,
 
     classifier = MultiLabelClassifier.load_model(repeat_time=repeat_time,
                                                  param_dict=model_param_dict)
-    log.info("freeze: {}".format(args.freeze))
-    log.info("trainable params: {}".format(classifier.trainable_params()))
-    log.info("hierarchical sense number: {}".format(source_dataset.num_cls))
-    log.info("learning rate: {}".format(args.learning_rate))
+    log.info("Freeze: {}".format(args.freeze))
+    log.info("Trainable Params: {}".format(classifier.trainable_params()))
+    log.info("Hierarchical Sense Number: {}".format(source_dataset.num_cls))
+    log.info("Final Learning Rate: {}".format(args.learning_rate))
     train_steps = len(loader_list[0]) * args.epochs
     # 设置warmup长度为总步数的10%
     warmup_lr = ms.nn.WarmUpLR(args.learning_rate, train_steps // 10)
@@ -95,7 +96,8 @@ def once_process(args,
 
     # 是否选择使用早停机制
     if args.early_stopping:
-        es = EarlyStopping(classifier.save_model, repeat_time)
+        es = EarlyStopping(model_save_func=classifier.save_model,
+                           repeat_time=repeat_time)
     loss_fn = ms.nn.SoftmaxCrossEntropyWithLogits(sparse=True, reduction="mean")
 
     def forward_fn(data):
@@ -127,14 +129,14 @@ def once_process(args,
                 (loss, outputs), grads = grad_fn(data)
                 if args.label_mode == 5:
                     grads = grads[:2] + outputs["weight_units_grads"]
-                grads = ms.ops.clip_by_global_norm(grads, 1.0)
+                # grads = ms.ops.clip_by_global_norm(grads, 5.0)
                 optimizer.learning_rate = warmup_lr(ms.Tensor(total_step, ms.float32))
                 optimizer(grads)
                 # loss = ms.ops.depend(loss, optimizer(grads))
                 loss_sum += loss.asnumpy()
 
-                # 保存一下前面层次生成的标签嵌入
-                classifier.save_label_embeddings()
+                # # 保存一下前面层次生成的标签嵌入
+                # classifier.save_label_embeddings()
                 for i in range(args.hierarchy):
                     acc_metrics[i].update(outputs["output"][hierarchy_key[i]],
                                           data[hierarchy_key[i]])
@@ -144,7 +146,7 @@ def once_process(args,
                 if total_step % args.log_freq == 0:
                     print()
                     # print(classifier.get_label_embeddings()[:4])
-                    print([param.value() for param in classifier.weight_units.l1_weight_units])
+                    # print([param.value() for param in classifier.weight_units.l1_weight_units])
                     log.info("Current Learning Rate: {:.6f}".format(optimizer.learning_rate.item()))
                     log.info("Epoch {} Step {} Average Loss: {}".format(epoch + 1, total_step, loss_sum / (idx + 1)))
                     log.info("Epoch {} Step {} Acc: {}".format(epoch + 1, total_step,
@@ -156,9 +158,12 @@ def once_process(args,
                                                                      range(args.hierarchy)]))
                 # 进行验证集测试，用于选出最佳模型
                 if args.early_stopping and total_step % args.dev_step == 0:
+                    # 在验证之前保存一下前面层次的embeddings
+                    classifier.save_label_embeddings()
                     acc_res, f1_res = test_process(loader=loader_list[1],
                                                    model=classifier,
-                                                   metrics=[acc_metrics, f1_metrics],
+                                                   metrics=[copy.deepcopy(acc_metrics),
+                                                            copy.deepcopy(f1_metrics)],
                                                    mode="Dev",
                                                    repeat_time=repeat_time)
                     is_break = es.apply(cur_res=[acc_res[-1], f1_res[-1]], cur_step=total_step)
@@ -239,7 +244,7 @@ if __name__ == '__main__':
     parser.add_argument("-mn", "--model_name", default="roberta-base", type=str)
     parser.add_argument("-f", "--freeze", action="store_true")
     # parser.add_argument("-cn", "--classifier_name", default="MultiLabelClassifier", type=str)
-    parser.add_argument("-lm", "--label_mode", default=0, type=int, choices=range(1, 7))
+    parser.add_argument("-lm", "--label_mode", default=0, type=int, choices=range(7))
     # 训练设置
     parser.add_argument("-lr", "--learning_rate", default=1e-3, type=float)
     parser.add_argument("-lf", "--log_freq", default=100, type=int)

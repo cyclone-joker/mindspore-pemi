@@ -123,7 +123,7 @@ class BaseClassifier(mindspore.nn.Cell):
                 if repeat_time > 0 or self.save_count > 0:
                     self.saved_id = obtain_max_id()
                 else:
-                    self.saved_id = obtain_max_id(suffix="Multi-level_Prompt") + 1
+                    self.saved_id = obtain_max_id(prefix="Multi-level_Prompt") + 1
             dir_name = os.path.join(self.model_save_path,
                                     "Multi-level_Prompt_{}".format(self.saved_id),
                                     "checkpoint_{:06d}".format(repeat_time * 100000 + step))
@@ -184,8 +184,7 @@ class BaseClassifier(mindspore.nn.Cell):
             classifier.saved_id = param_dict["saved_id"]
             if os.path.exists(model_path):
                 log.info("从{}步检查点加载模型...".format(max_step))
-                param_dict = ms.load_checkpoint(model_path)
-                ms.load_param_into_net(classifier, param_dict)
+                ms.load_checkpoint(model_path, net=classifier)
             else:
                 log.info("对应Checkpoints不存在，将创建初始预训练模型...")
         else:
@@ -341,7 +340,6 @@ class MultiLabelClassifier(WARPClassifier):
                             label_embed_list[idx + 1][i] = getattr(self.weight_units, "l{}_weight_units".format(level))[
                                                                i] @ lower_embeds
                         elif self.label_mode == 5:
-                            # weighted_tensor = getattr(self.weight_units, "l{}_weight_units_{}".format(level, i))
                             weighted_tensor = getattr(self.weight_units, "l{}_weight_units".format(level))[i]
                             upper_tensor, grads = weighted_grad_fn(weighted_tensor, lower_embeds)
                             grads_list.append(grads[0])
@@ -475,11 +473,6 @@ class LabelEmbeddingLayer(ms.nn.Cell):
         self.num_cls = num_cls
         self.label_embeddings = ms.nn.Embedding(vocab_size=self.num_cls,
                                                 embedding_size=self.output_size)
-                                                # embedding_table=initializer(
-                                                #     Normal(mean=embeddings.weight.mean().item(),
-                                                #            sigma=embeddings.weight.std().item()),
-                                                #     [self.num_cls, self.output_size],
-                                                #     ms.float32))
         self.label_embeddings.weight.set_data(ms.ops.normal((self.num_cls, self.output_size),
                                                             mean=embeddings.weight.mean().item(),
                                                             stddev=embeddings.weight.std().item()).copy())
@@ -523,10 +516,6 @@ class WeightUnits(ms.nn.Cell):
                                                         requires_grad=True,
                                                         name="l{}_weight_unit_{}".format(level, j))
                                            for j, val in enumerate(origin_list[idx])]))
-                # for j, val in enumerate(origin_list[idx]):
-                #     setattr(self, "l{}_weight_units_{}".format(level, j),
-                #             ms.Parameter(ms.ops.ones(len(val)).div(len(val)),
-                #                          requires_grad=True))
             elif self.label_mode == 6:
                 beta = 0.9
                 weight_tensors = [(1 - beta ** ms.tensor([count for count in val.values()])) / (1 - beta)
